@@ -164,6 +164,14 @@ def create_feature_branch_job(jenkins, job_name, new_job_name, branch, user_emai
     return job
 
 
+def create_jenkins(global_config):
+    jenkins_url = global_config['jenkins']['url']
+    user_name, password = None, None
+    j = Jenkins(jenkins_url, user_name, password)
+    j.login()
+    return j
+
+
 #===================================================================================================
 # feature_branch_add
 #===================================================================================================
@@ -178,8 +186,7 @@ def feature_branch_add(args, branch, user_email, job_config, global_config):
     if args:
         branch = args[0]
 
-    jenkins_url = global_config['jenkins']['url']
-    jenkins = Jenkins(jenkins_url)
+    jenkins = create_jenkins(global_config)
     for job_name, new_job_name in get_configured_jobs(branch, job_config):
         create_feature_branch_job(jenkins, job_name, new_job_name, branch, user_email)
 
@@ -198,8 +205,7 @@ def feature_branch_rm(args, branch, global_config, job_config):
     if args:
         branch = args[0]
 
-    jenkins_url = global_config['jenkins']['url']
-    jenkins = Jenkins(jenkins_url)
+    jenkins = create_jenkins(global_config)
     for _, new_job_name in get_configured_jobs(branch, job_config):
         if jenkins.has_job(new_job_name):
             jenkins.delete_job(new_job_name)
@@ -219,8 +225,7 @@ def feature_branch_start(args, branch, job_config, global_config):
     if args:
         branch = args[0]
 
-    jenkins_url = global_config['jenkins']['url']
-    jenkins = Jenkins(jenkins_url)
+    jenkins = create_jenkins(global_config)
 
     for _, new_job_name in get_configured_jobs(branch, job_config):
         if jenkins.has_job(new_job_name):
@@ -317,8 +322,7 @@ def server_list_jobs(args, global_config, opts):
     
     pattern = args[0]
 
-    jenkins_url = global_config['jenkins']['url']
-    jenkins = Jenkins(jenkins_url)
+    jenkins = create_jenkins(global_config)
     
     def match(job_name):
         if opts.re:
@@ -353,16 +357,39 @@ def server_list_jobs(args, global_config, opts):
                     if ans.startswith('y'):
                         jenkins.delete_job(job_name)
         
+    def rename_jobs(jobs, src, dst):
+        for job_name, job in jobs:
+            print job_name, '->', job_name.replace(src, dst)
+
+        ans = raw_input('Rename jobs (y(es)|n(o)? ').lower()
+        if ans.startswith('y'):
+            for job_name, job in jobs:
+                jenkins.rename_job(job_name, job_name.replace(src, dst))
+
     # TODO: remove this option from here, it belongs in a separate command
     if opts.interactive:
-        ans = raw_input('Select an operation? (rm | start | e(xit)): ').lower()
+        ans = raw_input('Select an operation? (rm | mv | st(art) | e(xit)): ').lower()
         if not ans or ans.startswith('e'):
             return
         
         elif ans == 'rm':
             delete_jobs(jobs)
         
-        elif ans == 'start':
+        elif ans == 'mv':
+            ans = raw_input('Type replace str?').lower()
+            if not ans:
+                return
+
+            replace_src = ans
+            ans = raw_input('Type replace for str?').lower()
+            if not ans:
+                return
+
+            replace_dst = ans
+
+            rename_jobs(jobs, replace_src, replace_dst)
+
+        elif ans == 'st' or ans == 'start':
             job_index = raw_input('Invoke job? id = ')
             if job_index:
                 try:
@@ -377,11 +404,201 @@ def server_list_jobs(args, global_config, opts):
                         pass
                     else:
                         print 'Invoking job: %r' % job_name
-                        job.invoke()
+                        try:
+                            job.invoke(['-'])
+                        except:
+                            url, params = job.get_build_triggerurl()
+                            os.startfile(url)
 
     return jenkins, jobs
 
             
+#===================================================================================================
+# server_jobs_status
+#===================================================================================================
+re_option = opt('--re', help='pattern is a regular expression', default=False, action='store_true')
+list_jobs_opts = [
+    re_option,
+#     opt('-i', '--interactive', help='interactively remove or start them', default=False, action='store_true'),
+]
+@app(alias='sv.st', usage='<pattern> [options]', opts=list_jobs_opts)
+def server_jobs_status(args, global_config, opts):
+    '''
+    Lists the jobs whose name match a given pattern.
+    '''
+    import fnmatch
+
+    track_jobs_file = os.path.join(os.path.dirname(__file__), 'cittrackjobs.yaml')
+    if os.path.isfile(track_jobs_file):
+        track_jobs_config = yaml.load(file(track_jobs_file).read())
+    else:
+        track_jobs_config = {
+            'pattern' : 'etk-*fb-*',
+        }
+
+    update_list = False
+    if len(args) == 1:
+        pattern = track_jobs_config['pattern'] = args[0]
+        update_list = True
+        f = file(track_jobs_file, 'w')
+        f.write(yaml.dump(track_jobs_config, default_flow_style=False))
+        f.close()
+    else:
+        pattern = track_jobs_config['pattern']
+        
+    jenkins = create_jenkins(global_config)
+
+    def match(job_name):
+        if opts.re:
+            return re.match(pattern, job_name)
+        else:
+            return fnmatch.fnmatch(jobname, pattern)
+
+    jobs = []
+    if not update_list and len(track_jobs_config.get('jobs', [])) > 0:
+        for jobname in track_jobs_config['jobs']:
+            job = jenkins.get_job(jobname)
+            print get_job_status(jobname, job, len(jobs))
+            jobs.append((jobname, job))
+    else:
+        for jobname in jenkins.iterkeys():
+            if match(jobname):
+                job = jenkins.get_job(jobname)
+                print get_job_status(jobname, job, len(jobs))
+                jobs.append((jobname, job))
+
+    def delete_jobs(jobs):
+        while True:
+            job_index = raw_input('Delete job? id = ')
+            try:
+                job_index = int(job_index)
+            except:
+                break
+            else:
+                try:
+                    job_name, job = jobs[job_index]
+                except:
+                    pass
+                else:
+                    ans = raw_input('Delete job (y(es)|n(o)? %r: ' % job_name).lower()
+                    if ans.startswith('y'):
+                        jenkins.delete_job(job_name)
+
+    def rename_jobs(jobs, src, dst):
+        for job_name, job in jobs:
+            print job_name, '->', job_name.replace(src, dst)
+
+        ans = raw_input('Rename jobs (y(es)|n(o)? ').lower()
+        if ans.startswith('y'):
+            for job_name, job in jobs:
+                jenkins.rename_job(job_name, job_name.replace(src, dst))
+
+    def get_job():
+        job_index = raw_input('Invoke job? id = ')
+        if job_index:
+            try:
+                job_index = int(job_index)
+            except:
+                pass
+            else:
+
+                try:
+                    return jobs[job_index]
+                except:
+                    pass
+
+        return None, None
+
+    # TODO: remove this option from here, it belongs in a separate command
+    ans = raw_input('Select an operation? (add | op(en url) | *e(xit)): ').lower()
+    if not ans or ans.startswith('e'):
+        return
+
+    elif ans == 'add':
+        job_name, job = get_job()
+        if job_name:
+            try:
+                track_jobs_config['jobs'].append(job_name)
+            except KeyError:
+                track_jobs_config['jobs'] = [job_name]
+
+            f = file(track_jobs_file, 'w')
+            f.write(yaml.dump(track_jobs_config, default_flow_style=False))
+            f.close()
+
+    elif ans == 'op':
+        job_name, job = get_job()
+        if job:
+            url, params = job.get_build_triggerurl()
+            os.startfile(url)
+
+
+@app(alias='sv.ld', usage='<pattern> [project]')
+def server_jobs_deps(args, global_config, opts):
+    project_name = args[0]
+    branch = args[1]
+
+    from sharedscripts10.shared_script import SharedScript
+    from sharedscripts10.shared_scripts.esss_project import EsssProject
+    import os.path
+
+    kraken = SharedScript.Create(project_name)
+    deps = [i for i in  kraken.ListDependencies(build_dependencies=True) if issubclass(i, EsssProject)]
+    dep_repos = []
+    for d in deps:
+        job_prefix = os.path.basename(d.GetValue('repository_dir'))
+        if job_prefix not in dep_repos:
+            dep_repos.append(job_prefix)
+
+    system = SharedScript.Create('system')
+    plat = system.GetValue('platform')
+    dist = system.GetValue('dist')
+    
+    jenkins = create_jenkins(global_config)
+
+    def UpdateConfig(apply_changes):
+        previous_job = None
+        for d in dep_repos:
+            job_name = '%s-%s-%s-%s' % (d, branch, dist, plat)
+            try:
+                if previous_job is not None:
+                    if jenkins.has_job(previous_job) and jenkins.has_job(job_name):
+                        print
+                        print job_name, 'after', previous_job
+                        if not apply_changes:
+                            continue
+                        job = jenkins.get_job(previous_job)
+                        xml_config = job.get_config()
+                        if job_name not in xml_config:
+                            new_xml_config = xml_config.replace(
+                                  '</publishers>',
+                                  '''
+            <hudson.tasks.BuildTrigger>
+              <childProjects>%s</childProjects>
+              <threshold>
+                <name>SUCCESS</name>
+                <ordinal>0</ordinal>
+                <color>BLUE</color>
+                <completeBuild>true</completeBuild>
+              </threshold>
+            </hudson.tasks.BuildTrigger>
+            </publishers>
+                                  ''' % job_name
+                              )
+                            print 'Setting Config'
+                            job.update_config(new_xml_config)
+                            print '\tDone Setting Config'
+            finally:
+                previous_job = job_name
+
+    UpdateConfig(False)
+    print
+    ans = raw_input('Apply Changes (y|*n): ')
+    if ans.startswith('y'):
+        UpdateConfig(True)
+
+    
+
 #===================================================================================================
 # get_job_status
 #===================================================================================================
@@ -403,7 +620,7 @@ def get_job_status(job_name, job, job_index=None):
 
     if job_index is None:
         job_index = ''
-    return '%2s %10s (%25s) - %s' % (job_index, status, timestamp, job_name)
+    return '%2s - %-55s | %10s (%25s)' % (job_index, job_name, status, timestamp)
 
 
 #===================================================================================================
@@ -474,8 +691,7 @@ def server_upload_jobs(args, global_config, opts):
         return 2
 
 
-    jenkins_url = global_config['jenkins']['url']
-    jenkins = Jenkins(jenkins_url)
+    jenkins = create_jenkins(global_config)
 
     search_pattern = None
     local_jobs = []
@@ -607,8 +823,7 @@ def get_remote_job_infos(pattern, global_config, use_re=False, jenkins=None):
     import fnmatch
     
     if jenkins is None:
-        jenkins_url = global_config['jenkins']['url']
-        jenkins = Jenkins(jenkins_url)
+        jenkins = create_jenkins(global_config)
 
     regex = re.compile(pattern)
     

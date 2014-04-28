@@ -1,6 +1,7 @@
 from __future__ import with_statement
 import threading
 import traceback
+import getpass
 
 #===================================================================================================
 # configure_submodules_path
@@ -169,9 +170,13 @@ def create_feature_branch_job(jenkins, job_name, new_job_name, branch, user_emai
 def create_jenkins(global_config, authenticate=False):
     jenkins_url = global_config['jenkins']['url']
     if authenticate:
-        user_name = global_config['jenkins']['user']
-        password = global_config['jenkins']['pass']
-        assert user_name and password
+        try:
+            user_name = global_config['jenkins']['user']
+            password = global_config['jenkins']['pass']
+            assert user_name and password
+        except:
+            user_name = raw_input('Username:')
+            password = getpass.getpass()
     else:
         user_name, password = None, None
 
@@ -646,6 +651,7 @@ def server_jobs_link(args, global_config, opts):
 
 
 
+    jobs_created = []
     def UpdateConfig(apply_changes):
         previous_job = None
         for job_name in args:
@@ -664,6 +670,7 @@ def server_jobs_link(args, global_config, opts):
                     if not apply_changes:
                         continue
                     job = jenkins.get_job(previous_job)
+                    jobs_created.append(job)
                     xml_config = GetXmlConfig(job)
                     if job_name in xml_config:
                         print 'Skipping (already previously set)'
@@ -702,7 +709,13 @@ def server_jobs_link(args, global_config, opts):
     if raw_input('Proceed to Link jobs (y|*n): ') == 'y':
         UpdateConfig(True)
         
-        print '\nFinished.'
+        print '\nFinished'
+        # Code below doesn't seem to be working (invoke fails with urllib2.HTTPError: HTTP Error 405: Method Not Allowed)
+        # if jobs_created:
+        #     job = jobs_created[0]
+        #     if not job.is_running():
+        #         if raw_input('\nJobs linked. Do you want to start Job: %s\n(y|*n)' % (job,)).strip() == 'y':
+        #             job.invoke()
 
 
 

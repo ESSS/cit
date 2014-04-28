@@ -233,7 +233,7 @@ def feature_branch_start(args, branch, job_config, global_config):
     if args:
         branch = args[0]
 
-    jenkins = create_jenkins(global_config)
+    jenkins = create_jenkins(global_config, authenticate=True)
 
     for _, new_job_name in get_configured_jobs(branch, job_config):
         if jenkins.has_job(new_job_name):
@@ -701,6 +701,8 @@ def server_jobs_link(args, global_config, opts):
     print
     if raw_input('Proceed to Link jobs (y|*n): ') == 'y':
         UpdateConfig(True)
+        
+        print '\nFinished.'
 
 
 

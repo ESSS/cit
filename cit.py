@@ -1,4 +1,6 @@
 from __future__ import with_statement
+import threading
+import traceback
 
 #===================================================================================================
 # configure_submodules_path
@@ -47,7 +49,7 @@ from optparse import make_option as opt
 #===================================================================================================
 def get_global_config_file():
     '''
-    Returns the path to the global config file. 
+    Returns the path to the global config file.
     '''
     # default values
     global_config_file = os.environ.get('CIT_CONFIG')
@@ -62,24 +64,24 @@ def get_global_config_file():
 def get_command_args(opts):
     '''
     Returns a dict containing all extra options that commands in this module can receive as
-    arguments. 
-    
+    arguments.
+
     See clik framework for more details on this.
     '''
     cit_file_name, job_config = load_cit_local_config(os.getcwd())
-    
+
     # user, email, branch
     user_name, user_email = get_git_user()
     branch = get_git_branch()
-    
+
     global_config_file = get_global_config_file()
-        
+
     # read global config
     if os.path.isfile(global_config_file):
         global_config = yaml.load(file(global_config_file).read())
     else:
         global_config = {}
-    
+
     return {
         'job_config' : job_config,
         'global_config' : global_config,
@@ -92,8 +94,8 @@ def get_command_args(opts):
 
 app = clik.App(
     name='cit',
-    description='Command line tool for interacting with a Jenkins integration server.\n', 
-    args_callback=get_command_args, 
+    description='Command line tool for interacting with a Jenkins integration server.\n',
+    args_callback=get_command_args,
     shell_command=False,
     console_opts=False,
 )
@@ -101,9 +103,9 @@ app = clik.App(
 #===================================================================================================
 # Feature Branch Commands
 # -----------------------
-# 
-# The next commands deal with feature branch jobs for the git repository in the current directory.  
-# 
+#
+# The next commands deal with feature branch jobs for the git repository in the current directory.
+#
 #===================================================================================================
 
 #===================================================================================================
@@ -120,7 +122,7 @@ def create_feature_branch_job(jenkins, job_name, new_job_name, branch, user_emai
 
     # this workaround is required otherwise when copying
     # jobs using the remote-API they are created as
-    # non-buildable for some reason 
+    # non-buildable for some reason
     job.disable()
 
     print '%s => %s (%s)' % (job_name, new_job_name, status)
@@ -164,9 +166,15 @@ def create_feature_branch_job(jenkins, job_name, new_job_name, branch, user_emai
     return job
 
 
-def create_jenkins(global_config):
+def create_jenkins(global_config, authenticate=False):
     jenkins_url = global_config['jenkins']['url']
-    user_name, password = None, None
+    if authenticate:
+        user_name = global_config['jenkins']['user']
+        password = global_config['jenkins']['pass']
+        assert user_name and password
+    else:
+        user_name, password = None, None
+
     j = Jenkins(jenkins_url, user_name, password)
     j.login()
     return j
@@ -179,7 +187,7 @@ def create_jenkins(global_config):
 def feature_branch_add(args, branch, user_email, job_config, global_config):
     '''
     Create/Update jobs associated with the current git branch.
-    
+
     This will create one or more jobs on jenkins for the current feature branch,
     or for the one given as parameter if one is provided.
     '''
@@ -198,7 +206,7 @@ def feature_branch_add(args, branch, user_email, job_config, global_config):
 def feature_branch_rm(args, branch, global_config, job_config):
     '''
     Remove jobs associated with the current git branch.
-    
+
     This will remove one or more jobs from jenkins created previously with "feature_branch_add".
     If no branch is given the current one will be used.
     '''
@@ -212,8 +220,8 @@ def feature_branch_rm(args, branch, global_config, job_config):
             print new_job_name, '(REMOVED)'
         else:
             print new_job_name, '(NOT FOUND)'
-            
-            
+
+
 #===================================================================================================
 # feature_branch_start
 #===================================================================================================
@@ -238,8 +246,8 @@ def feature_branch_start(args, branch, job_config, global_config):
         else:
             status = '(NOT FOUND)'
         print new_job_name, status
-        
-        
+
+
 #===================================================================================================
 # feature_branch_init
 #===================================================================================================
@@ -247,10 +255,10 @@ def feature_branch_start(args, branch, job_config, global_config):
 def feature_branch_init():
     '''
     *Initial* feature-branch configuration for the current git repository.
-    
+
     This command will ask in sequence for the names of the jobs you would like to use
     as basis for feature branch jobs at your Jenkins server. Usually you will want all
-    job variations that build the "master" branch. 
+    job variations that build the "master" branch.
     '''
     cit_file_name, config = load_cit_local_config(os.getcwd())
 
@@ -286,14 +294,14 @@ def feature_branch_init():
         print 'Done! Configured %d job(s)!' % updated
     else:
         print 'Abort? Okaay.'
-        
-        
+
+
 #===================================================================================================
 # Server Commands
 # -----------------------
-# 
-# The next commands deal directly with jobs on the server, and can be run from anywhere.  
-# 
+#
+# The next commands deal directly with jobs on the server, and can be run from anywhere.
+#
 #===================================================================================================
 
 #===================================================================================================
@@ -310,20 +318,20 @@ def server_list_jobs(args, global_config, opts):
     Lists the jobs whose name match a given pattern.
     '''
     import fnmatch
-    
+
     if len(args) < 1:
         print >> sys.stderr, 'error: missing pattern'
         return 2
-    
+
     # TODO: other commands call this one; we should refactor this to make most of the functionality
     # reusable
     if not hasattr(opts, 'interactive'):
         opts.interactive = False
-    
+
     pattern = args[0]
 
     jenkins = create_jenkins(global_config)
-    
+
     def match(job_name):
         if opts.re:
             return re.match(pattern, job_name)
@@ -356,7 +364,7 @@ def server_list_jobs(args, global_config, opts):
                     ans = raw_input('Delete job (y(es)|n(o)? %r: ' % job_name).lower()
                     if ans.startswith('y'):
                         jenkins.delete_job(job_name)
-        
+
     def rename_jobs(jobs, src, dst):
         for job_name, job in jobs:
             print job_name, '->', job_name.replace(src, dst)
@@ -371,10 +379,10 @@ def server_list_jobs(args, global_config, opts):
         ans = raw_input('Select an operation? (rm | mv | st(art) | e(xit)): ').lower()
         if not ans or ans.startswith('e'):
             return
-        
+
         elif ans == 'rm':
             delete_jobs(jobs)
-        
+
         elif ans == 'mv':
             ans = raw_input('Type replace str?').lower()
             if not ans:
@@ -397,7 +405,7 @@ def server_list_jobs(args, global_config, opts):
                 except:
                     pass
                 else:
-    
+
                     try:
                         job_name, job = jobs[job_index]
                     except:
@@ -412,7 +420,7 @@ def server_list_jobs(args, global_config, opts):
 
     return jenkins, jobs
 
-            
+
 #===================================================================================================
 # server_jobs_status
 #===================================================================================================
@@ -445,7 +453,7 @@ def server_jobs_status(args, global_config, opts):
         f.close()
     else:
         pattern = track_jobs_config['pattern']
-        
+
     jenkins = create_jenkins(global_config)
 
     def match(job_name):
@@ -553,7 +561,7 @@ def server_jobs_deps(args, global_config, opts):
     system = SharedScript.Create('system')
     plat = system.GetValue('platform')
     dist = system.GetValue('dist')
-    
+
     jenkins = create_jenkins(global_config)
 
     def UpdateConfig(apply_changes):
@@ -597,7 +605,104 @@ def server_jobs_deps(args, global_config, opts):
     if ans.startswith('y'):
         UpdateConfig(True)
 
-    
+@app(alias='sv.link', usage='[list of jobs to link (obtain with civ st.ls)]')
+def server_jobs_link(args, global_config, opts):
+    jenkins = create_jenkins(global_config, authenticate=True)
+
+    checked_names = set()
+
+    def HasJob(job_name):
+        if job_name in checked_names:
+            return True
+
+        ret = jenkins.has_job(job_name)
+        if ret:
+            checked_names.add(ret)
+
+        return ret
+
+
+    def GetXmlConfig(job):
+        # This is a hack to execute job.get_config in a thread retrying many times
+        # because it seems to hang there consistently.
+        event = threading.Event()
+
+        class T(threading.Thread):
+
+            def run(self):
+                self.config = job.get_config()
+                event.set()
+
+        for i in xrange(5):
+            t = T()
+            t.setDaemon(True)
+            t.start()
+            event.wait(3)
+            if hasattr(t, 'config'):
+                return t.config
+            print 'Unable to get job xml. Retrying... (%s of 5)' % (i+1,)
+
+        raise AssertionError('Error: unable to get the config for the job: %s' % (job,))
+
+
+
+    def UpdateConfig(apply_changes):
+        previous_job = None
+        for job_name in args:
+            try:
+                if previous_job is not None:
+                    if not HasJob(previous_job):
+                        print 'Error: could not find job: %s' % (previous_job,)
+                        return False
+
+                    if not HasJob(job_name):
+                        print 'Error: could not find job: %s' % (job_name,)
+                        return False
+
+                    print
+                    print job_name, 'after', previous_job
+                    if not apply_changes:
+                        continue
+                    job = jenkins.get_job(previous_job)
+                    xml_config = GetXmlConfig(job)
+                    if job_name in xml_config:
+                        print 'Skipping (already previously set)'
+                        continue
+                    
+                    if 'hudson.tasks.BuildTrigger' in xml_config:
+                        print 'Skipping (build trigger already set)'
+                        continue
+                    
+                    new_xml_config = xml_config.replace(
+                          '</publishers>',
+                          '''
+    <hudson.tasks.BuildTrigger>
+      <childProjects>%s</childProjects>
+      <threshold>
+        <name>SUCCESS</name>
+        <ordinal>0</ordinal>
+        <color>BLUE</color>
+        <completeBuild>true</completeBuild>
+      </threshold>
+    </hudson.tasks.BuildTrigger>
+    </publishers>
+                          ''' % job_name
+                      )
+                    print '\tSetting Config'
+                    job.update_config(new_xml_config)
+                    print '\tDone Setting Config'
+            finally:
+                previous_job = job_name
+        return True
+
+    if not UpdateConfig(False):
+        return
+
+    print
+    if raw_input('Proceed to Link jobs (y|*n): ') == 'y':
+        UpdateConfig(True)
+
+
 
 #===================================================================================================
 # get_job_status
@@ -627,12 +732,12 @@ def get_job_status(job_name, job, job_index=None):
 # JobInfo
 #===================================================================================================
 class JobInfo(object):
-    
+
     REGEX_JOB_NAME = re.compile(r'(.+__)(\d{2,3})-(.+)')
-                
+
     def __init__(self, directory):
         '''
-        
+
         :param directory:
         '''
         self.directory = directory
@@ -642,15 +747,15 @@ class JobInfo(object):
             self.config_filename = config_filename
         else:
             self.config_filename = None
-        
+
     def BaseName(self):
         '''
-        :return str: The job name without it's index  
+        :return str: The job name without it's index
         '''
         match = self.REGEX_JOB_NAME.match(self.name)
         if match:
             return match.group(1) + match.group(3)
-    
+
     def SearchPattern(self):
         '''
         :return str: THe pattern to list the jobs
@@ -658,7 +763,7 @@ class JobInfo(object):
         match = self.REGEX_JOB_NAME.match(self.name)
         if match:
             return match.group(1) + '*'
-        
+
 
 #===================================================================================================
 # server_upload_jobs
@@ -668,23 +773,23 @@ reindex_opt = opt('--reindex', default=False, action='store_true', help='reindex
 def server_upload_jobs(args, global_config, opts):
     '''
     Uploads jobs found in a directory directly to jenkins.
-    
+
     The jobs should be defined as with a "config.xml" file per job, while the directory containing the
     "config.xml" file will be used as the name of the job:
-        
+
         source-dir
             /job-name1
                 /config.xml
             /job-name2
                 /config.xml
-                
+
     Executing "cit server_upload_jobs source-dir" will upload "job-1" and "job-2" to jenkins,
     creating or updating them.
     '''
     if not args:
         print >> sys.stderr, "error: Must pass a directory name"
         return 2
-    
+
     directory = args[0]
     if not os.path.exists(directory):
         print >> sys.stderr, 'error: Directory "%s" does not exist' % directory
@@ -704,59 +809,59 @@ def server_upload_jobs(args, global_config, opts):
         if job_info.config_filename is None:
             print 'Missing config.xml file from %r' % dir_name
             continue
-        
+
         if opts.reindex:
             if search_pattern is None:
                 search_pattern = job_info.SearchPattern()
             elif search_pattern != job_info.SearchPattern():
                 raise ValueError('Bad job names pattern: %r != %r' % (search_pattern, job_info.SearchPattern()))
-        
+
         job_info.update = jenkins.has_job(job_info.name)
         local_jobs.append(job_info)
-        
+
     rename_jobs = {}
     delete_jobs = []
     if opts.reindex:
         remote_jobs = get_remote_job_infos(search_pattern, global_config, jenkins=jenkins)
         remote_basenames = dict((ji.BaseName(), ji) for ji in remote_jobs)
-        
+
         for job_info in local_jobs:
             base_name = job_info.BaseName()
             remote_job = remote_basenames.pop(base_name, None)
             if remote_job is not None and remote_job.name != job_info.name:
                 rename_jobs[job_info.name] = remote_job.name
-        
+
         delete_jobs = [ji.name for ji in remote_basenames.itervalues()]
-        
+
     for job_info in local_jobs:
         if job_info.name in rename_jobs:
             print 'Renaming %r -> %r' % (rename_jobs[job_info.name], job_info.name)
-            
+
         elif job_info.update:
             print 'Updating %r' % job_info.name
         else:
             print 'Creating %r' % job_info.name
-            
+
     for job_name in delete_jobs:
         print
         print 'Deleting %r' % job_name
         print
-            
+
     if len(local_jobs) > 0:
         ans = raw_input('Update jobs (y|*n): ')
         if ans.startswith('y'):
             for job_info in local_jobs:
                 config_xml = file(job_info.config_filename).read()
-                
+
                 if job_info.name in rename_jobs:
                     remote_name = rename_jobs[job_info.name]
                     print '\tUpdating job'
                     job = jenkins.get_job(remote_job.name)
                     job.update_config(config_xml)
-                    
+
                     print 'Renaming %r -> %r' % (remote_name, job_info.name)
                     jenkins.rename_job(remote_name, job_info.name)
-                    
+
                 else:
                     if job_info.update:
                         print 'Updating %r' % job_info.name
@@ -778,35 +883,35 @@ def server_upload_jobs(args, global_config, opts):
 def server_download_jobs(args, opts, global_config):
     '''
     Downloads jobs from jenkins whose name match the given pattern (fnmatch or regex style).
-    
+
     If the directory is not given, it will default to "."
     '''
     if len(args) < 1:
         print >> sys.stderr, 'error: Missing pattern argument'
         return 2
-    
+
     pattern = args[0]
-    
+
     if len(args) > 1:
         directory = args[1]
     else:
         directory = '.'
-        
+
     jenkins, jobs_to_download = server_list_jobs([pattern], global_config, opts)
-    
+
     print 'Found: %d jobs' % len(jobs_to_download)
     ans = raw_input("Download jobs?(y|*n): ")
-    
+
     if not ans.lower().startswith('y'):
         return
-        
+
     directory = directory or 'hudson'
     if not os.path.exists(directory):
         os.mkdir(directory)
 
     for jobname, job in jobs_to_download:
         print 'Downloading: %r' % jobname
-        job_dir = os.path.join(directory, jobname) 
+        job_dir = os.path.join(directory, jobname)
         os.mkdir(job_dir)
         xml_filename = os.path.join(job_dir, 'config.xml')
         job_xml = job.get_config()
@@ -821,12 +926,12 @@ def get_remote_job_infos(pattern, global_config, use_re=False, jenkins=None):
     :param jenkins:
     '''
     import fnmatch
-    
+
     if jenkins is None:
         jenkins = create_jenkins(global_config)
 
     regex = re.compile(pattern)
-    
+
     def match(job_name):
         if use_re:
             return regex.match(job_name)
@@ -837,9 +942,9 @@ def get_remote_job_infos(pattern, global_config, use_re=False, jenkins=None):
     for jobname in jenkins.iterkeys():
         if match(jobname):
             jobs.append(JobInfo(jobname))
-            
+
     return jobs
-    
+
 
 #===================================================================================================
 # server_rm_jobs
@@ -895,8 +1000,8 @@ def get_git_branch():
 def cit_install():
     '''
     Configures cit for the first time.
-    
-    This command should be used to configure cit for the first time. 
+
+    This command should be used to configure cit for the first time.
     '''
     print '=' * 60
     print 'Configuration'
@@ -943,7 +1048,7 @@ def load_cit_local_config(from_dir):
     git_dir = find_git_directory(from_dir)
     if git_dir is None:
         return None, {}
-    
+
     cit_file_name = os.path.join(os.path.dirname(git_dir), '.cit.yaml')
 
     result = {}
@@ -969,9 +1074,9 @@ def find_git_directory(from_dir):
         tries += 1
         if tries >= max_tries:
             return None
-        
+
     return git_dir
-    
+
 
 #===================================================================================================
 # general utilities
@@ -1002,4 +1107,26 @@ def check_output(*args, **kwargs):
 # main
 #===================================================================================================
 if __name__ == '__main__':
+
+#     class DumpCurrentFramesThread(threading.Thread):
+#         def run(self):
+#             while True:
+#                 import time
+#                 time.sleep(1)
+#                 import sys
+#                 stack_trace = ['---------- START Stack Trace ---------']
+#         
+#                 for _thread_id, stack in sys._current_frames().items():
+#                     stack_trace.append("\n# Thread -----------------")
+#                     for filename, lineno, name, line in traceback.extract_stack(stack):
+#                         stack_trace.append(' File "%s", line %d, in %s' % (filename, lineno, name))
+#                         if line:
+#                             stack_trace.append("   %s" % (line.strip()))
+#                 stack_trace.append('---------- END Stack Trace ---------')
+#                 print '\n'.join(stack_trace)
+#     
+#     
+#     dump_current_frames_thread = DumpCurrentFramesThread()
+#     dump_current_frames_thread.setDaemon(True)  # Will die even if this thread is alive.
+#     dump_current_frames_thread.start()
     sys.exit(app.main())

@@ -175,6 +175,7 @@ def create_jenkins(global_config, authenticate=False):
             password = global_config['jenkins']['pass']
             assert user_name and password
         except:
+            print "Note: 'user' and 'pass' can be specified in citconfig.yaml (under jenkins)"
             user_name = raw_input('Username:')
             password = getpass.getpass()
     else:
@@ -612,6 +613,10 @@ def server_jobs_deps(args, global_config, opts):
 
 @app(alias='sv.link', usage='[list of jobs to link (obtain with civ st.ls)]')
 def server_jobs_link(args, global_config, opts):
+    if not args:
+        print 'List of jobs to link not passed (obtain with civ st.ls <pattern>).'
+        return
+    
     jenkins = create_jenkins(global_config, authenticate=True)
 
     checked_names = set()

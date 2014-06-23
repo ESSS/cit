@@ -7,8 +7,16 @@ def pytest_addoption(parser):
     require a live Jenkins instance will be skipped.
     '''
     parser.addoption(
-        "--jenkins-available", 
-        action="store_true", 
-        default=False,
-        help="if tests with a real jenkins server should be executed",
+        "--url",
+        help="Specify URL where Jenkins that will be used on tests is running. Default is http://localhost:8080",
+    )
+
+    parser.addoption(
+        "--user",
+        help="Username that should be user to authenticate on Jenkins (if necessary).",
+    )
+
+    parser.addoption(
+        "--pass",
+        help="Password that should be user to authenticate on Jenkins (if necessary).",
     )

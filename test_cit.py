@@ -12,18 +12,27 @@ import yaml
 import sys
 
 
-JENKINS_URL = 'http://localhost:8080'
 JOB_TEST_PREFIX = 'cit-test-job-'
+
 
 #===================================================================================================
 # jenkins
 #===================================================================================================
 @pytest.fixture
-def tmp_job_name(request, tmpdir):
+def jenkins_settings(request):
+    jenkins_url = request.config.getoption('--url')
+    jenkins_user = request.config.getoption('--user')
+    jenkins_pass = request.config.getoption('--pass')
+    return jenkins_url, jenkins_user, jenkins_pass
+
+
+@pytest.fixture
+def tmp_job_name(request, tmpdir, jenkins_settings):
     config = file(os.path.join(os.path.dirname(__file__), 'test_config.xml')).read()
     
-    jenkins = Jenkins(JENKINS_URL)
-    
+    jenkins_url, jenkins_user, jenkins_pass = jenkins_settings
+    jenkins = Jenkins(jenkins_url, jenkins_user, jenkins_pass)
+
     # create job using base config
     hasher = hashlib.sha1(str(time.time()))
     job_name = '%s%s' % (JOB_TEST_PREFIX, hasher.hexdigest())
@@ -41,15 +50,14 @@ def tmp_job_name(request, tmpdir):
     cit_config_file = str(tmpdir.join('.cit.yaml'))
     yaml.dump(cit_config, file(cit_config_file, 'w'))
     
-    
     def delete_test_jobs():
         '''
         finalizer for this fixture that removes left-over test jobs from the live jenkins server.
         '''
-        jenkins = Jenkins(JENKINS_URL)
-        for name, job in jenkins.get_jobs():
-            if name.startswith(JOB_TEST_PREFIX):
-                jenkins.delete_job(name)
+        jenkins = Jenkins(jenkins_url, jenkins_user, jenkins_pass)
+        for job_name in jenkins.iterkeys():
+            if job_name.startswith(JOB_TEST_PREFIX):
+                jenkins.delete_job(job_name)
                 
     request.addfinalizer(delete_test_jobs)
     return job_name
@@ -77,14 +85,22 @@ def change_cwd(tmpdir):
 # global_config_file
 #===================================================================================================
 @pytest.fixture
-def global_config_file(tmpdir):    
+def global_config_file(tmpdir, request):
     '''
     fixture that initializes a config file in the given temp directory. Useful to test cit 
     commands when it has already been correctly configured. 
     '''
-    global_config_file = str(tmpdir.join('citconfig.yaml'))
-    global_config = {'jenkins' : {'url' : JENKINS_URL}}
-    yaml.dump(global_config, file(global_config_file, 'w'))
+    jenkins_url = request.config.getoption('--url')
+    jenkins_user = request.config.getoption('--user')
+    jenkins_pass = request.config.getoption('--pass')
+
+    global_config_file = tmpdir.join('citconfig.yaml')
+    global_config = {'jenkins' : {
+        'url': jenkins_url,
+        'user': jenkins_user,
+        'pass': jenkins_pass,
+    }}
+    yaml.dump(global_config, file(str(global_config_file), 'w'))
     return global_config_file
     
 
@@ -97,11 +113,11 @@ class TestFeatureBranchCommands(object):
     jenkins instance to be executed.
     '''
     
-    pytestmark = pytest.mark.skipif('not config.option.jenkins_available') 
+    pytestmark = pytest.mark.skipif('not config.option.url')
 
     @pytest.mark.usefixtures('change_cwd')
     @pytest.mark.parametrize('branch', ['new-feature', None])
-    def test_fb_add(self, tmp_job_name, global_config_file, branch):
+    def test_fb_add(self, jenkins_settings, tmp_job_name, global_config_file, branch):
         '''
         test "fb.add" command
         
@@ -123,8 +139,7 @@ class TestFeatureBranchCommands(object):
                     assert cit.app.main(argv) is None
         
         branch = 'new-feature'
-        
-        jenkins = Jenkins(JENKINS_URL)
+        jenkins = Jenkins(*jenkins_settings)
         new_job_name = tmp_job_name + '-' + branch
         assert jenkins.has_job(new_job_name), "no job %s found. available: %s" % (new_job_name, jenkins.get_jobs_list())
         
@@ -161,7 +176,7 @@ class TestFeatureBranchCommands(object):
     
     @pytest.mark.usefixtures('change_cwd')
     @pytest.mark.parametrize('branch', ['new-feature', None])
-    def test_fb_rm(self, tmp_job_name, global_config_file, branch):
+    def test_fb_rm(self, jenkins_settings, request, tmp_job_name, global_config_file, branch):
         '''
         test "fb.rm" command
         
@@ -169,11 +184,11 @@ class TestFeatureBranchCommands(object):
             parametrized to test removing passing a branch name in the command line and without
             (which means "use current branch as branch name") 
         '''
-        jenkins = Jenkins(JENKINS_URL)
+        jenkins = Jenkins(*jenkins_settings)
         new_job_name = tmp_job_name + '-new-feature'
         jenkins.copy_job(tmp_job_name, new_job_name)
         
-        jenkins = Jenkins(JENKINS_URL)
+        jenkins = Jenkins(*jenkins_settings)
         assert jenkins.has_job(new_job_name), "no job %s found. available: %s" % (new_job_name, jenkins.get_jobs_list())
         
         with mock.patch('cit.get_git_branch', autospec=True) as mock_get_git_branch:
@@ -186,7 +201,7 @@ class TestFeatureBranchCommands(object):
                     argv.append(branch)
                 assert cit.app.main(argv) is None
         
-        jenkins = Jenkins(JENKINS_URL)
+        jenkins = Jenkins(*jenkins_settings)
         assert not jenkins.has_job(new_job_name), "job %s found! available: %s" % (new_job_name, jenkins.get_jobs_list())
     
     
@@ -232,15 +247,14 @@ def test_cit_init(tmpdir):
 #===================================================================================================
 # test_cit_install
 #===================================================================================================
+@pytest.mark.skipif('not config.option.url')
 @pytest.mark.usefixtures('change_cwd')
-def test_cit_install(tmpdir):    
-    global_config_file = tmpdir.join('citconfig.yaml')
-    
+def test_cit_install(global_config_file, request, jenkins_settings):
     with mock.patch('cit.get_global_config_file', autospec=True) as mock_get_global_config_file:
         mock_get_global_config_file.return_value = str(global_config_file)
     
         input_lines = [
-            'localhost:8080',
+            jenkins_settings[0],
             '',
         ]
         stdin = StringIO.StringIO('\n'.join(input_lines))
@@ -253,10 +267,8 @@ def test_cit_install(tmpdir):
         assert global_config_file.ensure()
         contents = global_config_file.read()
         obtained = yaml.load(contents)
-        assert obtained == {'jenkins' : {'url' : 'http://localhost:8080'}}     
-    
-    
 
+        assert obtained == {'jenkins' : {'url' : jenkins_settings[0]}}
     
     
 #===================================================================================================

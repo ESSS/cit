@@ -23,7 +23,7 @@ configure_submodules_path()
 #===================================================================================================
 # imports
 #===================================================================================================
-from jenkinsapi.exceptions import UnknownJob
+from jenkinsapi.custom_exceptions import UnknownJob
 from jenkinsapi.jenkins import Jenkins
 import contextlib
 import subprocess
@@ -182,7 +182,6 @@ def create_jenkins(global_config, authenticate=False):
         user_name, password = None, None
 
     j = Jenkins(jenkins_url, user_name, password)
-    j.login()
     return j
 
 
@@ -200,7 +199,7 @@ def feature_branch_add(args, branch, user_email, job_config, global_config):
     if args:
         branch = args[0]
 
-    jenkins = create_jenkins(global_config)
+    jenkins = create_jenkins(global_config, authenticate=True)
     for job_name, new_job_name in get_configured_jobs(branch, job_config):
         create_feature_branch_job(jenkins, job_name, new_job_name, branch, user_email)
 
@@ -219,7 +218,7 @@ def feature_branch_rm(args, branch, global_config, job_config):
     if args:
         branch = args[0]
 
-    jenkins = create_jenkins(global_config)
+    jenkins = create_jenkins(global_config, authenticate=True)
     for _, new_job_name in get_configured_jobs(branch, job_config):
         if jenkins.has_job(new_job_name):
             jenkins.delete_job(new_job_name)
@@ -319,9 +318,12 @@ list_jobs_opts = [
     opt('-i', '--interactive', help='interactively remove or start them', default=False, action='store_true'),
 ]
 @app(alias='sv.ls', usage='<pattern> [options]', opts=list_jobs_opts)
-def server_list_jobs(args, global_config, opts):
+def server_list_jobs(args, global_config, opts, authenticate=False):
     '''
     Lists the jobs whose name match a given pattern.
+
+    :param bool authenticate:
+        Flag used to notify Jenkins that authentication information must be requested to user.
     '''
     import fnmatch
 
@@ -336,7 +338,7 @@ def server_list_jobs(args, global_config, opts):
 
     pattern = args[0]
 
-    jenkins = create_jenkins(global_config)
+    jenkins = create_jenkins(global_config, authenticate)
 
     def match(job_name):
         if opts.re:
@@ -971,7 +973,7 @@ def get_remote_job_infos(pattern, global_config, use_re=False, jenkins=None):
 #===================================================================================================
 @app(alias='sv.rm', usage='<pattern> [directory] [options]', opts=[re_option])
 def server_rm_jobs(args, opts, global_config):
-    jenkins, jobs_to_delete = server_list_jobs(args, global_config, opts)
+    jenkins, jobs_to_delete = server_list_jobs(args, global_config, opts, True)
 
     if len(jobs_to_delete) > 0:
         print 'Found: %d jobs' % len(jobs_to_delete)
